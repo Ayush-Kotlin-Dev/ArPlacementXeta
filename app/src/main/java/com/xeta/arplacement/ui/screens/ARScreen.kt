@@ -69,7 +69,6 @@ fun ARScreen(
     var lightEstimateState by remember { mutableStateOf<LightEstimate?>(null) }
     var trackingFailureReason by remember { mutableStateOf<TrackingFailureReason?>(null) }
     var lastPlacementTime by remember { mutableStateOf(0L) }
-    var showPlacementValidation by remember { mutableStateOf(false) }
     var placementError by remember { mutableStateOf<String?>(null) }
 
     val engine = rememberEngine()
@@ -115,14 +114,6 @@ fun ARScreen(
         if (placementError != null) {
             delay(3000)
             placementError = null
-        }
-    }
-
-    // Auto-hide placement validation after 2 seconds
-    LaunchedEffect(showPlacementValidation) {
-        if (showPlacementValidation) {
-            delay(2000)
-            showPlacementValidation = false
         }
     }
 
@@ -288,7 +279,6 @@ fun ARScreen(
 
                         placedDrills = listOf(placedDrill)
                         lastPlacementTime = System.currentTimeMillis()
-                        showPlacementValidation = true
                         triggerHapticFeedback(HapticFeedbackType.LongPress)
                     }
                     true
@@ -572,34 +562,6 @@ fun ARScreen(
                             }
                         }
                     }
-                }
-            }
-        }
-
-        // Placement Success Indicator
-        if (showPlacementValidation) {
-            Card(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .scale(pulseScale),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
-                shape = CircleShape
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .padding(16.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "✓",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
                 }
             }
         }
