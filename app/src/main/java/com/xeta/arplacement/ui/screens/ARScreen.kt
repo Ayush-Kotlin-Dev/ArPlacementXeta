@@ -70,6 +70,7 @@ fun ARScreen(
     var trackingFailureReason by remember { mutableStateOf<TrackingFailureReason?>(null) }
     var lastPlacementTime by remember { mutableStateOf(0L) }
     var placementError by remember { mutableStateOf<String?>(null) }
+    var isCleaningUp by remember { mutableStateOf(false) }
 
     val engine = rememberEngine()
     val materialLoader = rememberMaterialLoader(engine)
@@ -101,13 +102,18 @@ fun ARScreen(
 
     // Clear all placements
     fun clearAllPlacements() {
-        placedDrills.forEach { placedDrill ->
-            childNodes -= placedDrill.anchorNode
-            placedDrill.anchorNode.anchor?.detach()
-            placedDrill.anchorNode.destroy()
+        if (!isCleaningUp) {
+            placedDrills.forEach { placedDrill ->
+                try {
+                    // Only remove from childNodes, let SceneView handle anchor cleanup
+                    childNodes -= placedDrill.anchorNode
+                } catch (e: Exception) {
+                    // Ignore cleanup errors during clearing
+                }
+            }
+            placedDrills = emptyList()
+            triggerHapticFeedback(HapticFeedbackType.LongPress)
         }
-        placedDrills = emptyList()
-        triggerHapticFeedback(HapticFeedbackType.LongPress)
     }
 
     LaunchedEffect(placementError) {
@@ -142,6 +148,11 @@ fun ARScreen(
             onSessionResumed = {
                 sessionInitialized = true
             },
+            onSessionPaused = {
+                // Clean up resources when session is paused
+                currentFrame = null
+                trackingState = null
+            },
             onSessionUpdated = { session, frame ->
                 currentFrame = frame
                 trackingState = frame.camera.trackingState
@@ -170,6 +181,7 @@ fun ARScreen(
                     isPlaneDetected &&
                     currentFrame != null &&
                     sessionInitialized &&
+                    !isCleaningUp &&
                     System.currentTimeMillis() - lastPlacementTime > 500 // Prevent rapid tapping
                 ) {
                     val frame = currentFrame!!
@@ -184,104 +196,108 @@ fun ARScreen(
                                 trackable.isPoseInPolygon(hitResult.hitPose)
                     }
 
-                    planeHit?.let { hitResult ->
+                    if (planeHit != null) {
                         val hitPosition = Float3(
-                            hitResult.hitPose.translation[0],
-                            hitResult.hitPose.translation[1],
-                            hitResult.hitPose.translation[2]
+                            planeHit.hitPose.translation[0],
+                            planeHit.hitPose.translation[1],
+                            planeHit.hitPose.translation[2]
                         )
 
                         // Validate placement
                         val validationError = validatePlacement(hitPosition)
-                        if (validationError != null) {
-                            placementError = validationError
-                            triggerHapticFeedback(HapticFeedbackType.LongPress)
-                            return@let
-                        }
+                        val placementSucceeded =
+                            if (validationError != null) {
+                                placementError = validationError
+                                triggerHapticFeedback(HapticFeedbackType.LongPress)
+                                false
+                            } else {
+                                if (placedDrills.isNotEmpty()) {
+                                    clearAllPlacements()
+                                }
 
-                        if (placedDrills.isNotEmpty()) {
-                            clearAllPlacements()
-                        }
+                                val anchor = planeHit.createAnchor()
 
-                        val anchor = hitResult.createAnchor()
+                                // Enhanced drill colors and materials
+                                val drillColor = when (drill.id) {
+                                    1 -> Color(0xFF1976D2) // Blue drill
+                                    2 -> Color(0xFFD32F2F) // Red drill  
+                                    3 -> Color(0xFF388E3C) // Green drill
+                                    4 -> Color(0xFFFF6F00) // Orange drill
+                                    5 -> Color(0xFF7B1FA2) // Purple drill
+                                    else -> Color(0xFF424242) // Default gray
+                                }
 
-                        // Enhanced drill colors and materials
-                        val drillColor = when (drill.id) {
-                            1 -> Color(0xFF1976D2) // Blue drill
-                            2 -> Color(0xFFD32F2F) // Red drill  
-                            3 -> Color(0xFF388E3C) // Green drill
-                            4 -> Color(0xFFFF6F00) // Orange drill
-                            5 -> Color(0xFF7B1FA2) // Purple drill
-                            else -> Color(0xFF424242) // Default gray
-                        }
+                                // Create realistic drill appearance
+                                val drillMaterial = materialLoader.createColorInstance(
+                                    color = drillColor,
+                                    metallic = 0.8f,
+                                    roughness = 0.3f,
+                                    reflectance = 0.9f
+                                )
 
-                        // Create realistic drill appearance
-                        val drillMaterial = materialLoader.createColorInstance(
-                            color = drillColor,
-                            metallic = 0.8f,
-                            roughness = 0.3f,
-                            reflectance = 0.9f
-                        )
+                                val baseMaterial = materialLoader.createColorInstance(
+                                    color = Color(0xFF37474F),
+                                    metallic = 0.5f,
+                                    roughness = 0.7f,
+                                    reflectance = 0.4f
+                                )
 
-                        val baseMaterial = materialLoader.createColorInstance(
-                            color = Color(0xFF37474F),
-                            metallic = 0.5f,
-                            roughness = 0.7f,
-                            reflectance = 0.4f
-                        )
+                                // Create drill assembly
+                                val drillBit = CylinderNode(
+                                    engine = engine,
+                                    radius = 0.008f, // 8mm drill bit
+                                    height = 0.15f,   // 15cm length
+                                    materialInstance = drillMaterial
+                                ).apply {
+                                    position = Float3(0.0f, 0.075f, 0.0f)
+                                }
 
-                        // Create drill assembly
-                        val drillBit = CylinderNode(
-                            engine = engine,
-                            radius = 0.008f, // 8mm drill bit
-                            height = 0.15f,   // 15cm length
-                            materialInstance = drillMaterial
-                        ).apply {
-                            position = Float3(0.0f, 0.075f, 0.0f)
-                        }
+                                val drillBase = CylinderNode(
+                                    engine = engine,
+                                    radius = 0.02f,  // 2cm base
+                                    height = 0.04f,  // 4cm height
+                                    materialInstance = baseMaterial
+                                ).apply {
+                                    position = Float3(0.0f, 0.02f, 0.0f)
+                                }
 
-                        val drillBase = CylinderNode(
-                            engine = engine,
-                            radius = 0.02f,  // 2cm base
-                            height = 0.04f,  // 4cm height
-                            materialInstance = baseMaterial
-                        ).apply {
-                            position = Float3(0.0f, 0.02f, 0.0f)
-                        }
+                                // Add size indicator
+                                val sizeIndicator = SphereNode(
+                                    engine = engine,
+                                    radius = 0.003f,
+                                    materialInstance = materialLoader.createColorInstance(
+                                        color = Color.White,
+                                        metallic = 0.0f,
+                                        roughness = 0.1f,
+                                        reflectance = 1.0f
+                                    )
+                                ).apply {
+                                    position = Float3(0.025f, 0.15f, 0.0f)
+                                }
 
-                        // Add size indicator
-                        val sizeIndicator = SphereNode(
-                            engine = engine,
-                            radius = 0.003f,
-                            materialInstance = materialLoader.createColorInstance(
-                                color = Color.White,
-                                metallic = 0.0f,
-                                roughness = 0.1f,
-                                reflectance = 1.0f
-                            )
-                        ).apply {
-                            position = Float3(0.025f, 0.15f, 0.0f)
-                        }
+                                val anchorNode = AnchorNode(engine = engine, anchor = anchor)
+                                anchorNode.addChildNode(drillBit)
+                                anchorNode.addChildNode(drillBase)
+                                anchorNode.addChildNode(sizeIndicator)
 
-                        val anchorNode = AnchorNode(engine = engine, anchor = anchor)
-                        anchorNode.addChildNode(drillBit)
-                        anchorNode.addChildNode(drillBase)
-                        anchorNode.addChildNode(sizeIndicator)
+                                childNodes += anchorNode
 
-                        childNodes += anchorNode
+                                val placedDrill = PlacedDrill(
+                                    id = "${drill.id}_${System.currentTimeMillis()}",
+                                    anchorNode = anchorNode,
+                                    position = hitPosition,
+                                    drill = drill
+                                )
 
-                        val placedDrill = PlacedDrill(
-                            id = "${drill.id}_${System.currentTimeMillis()}",
-                            anchorNode = anchorNode,
-                            position = hitPosition,
-                            drill = drill
-                        )
-
-                        placedDrills = listOf(placedDrill)
-                        lastPlacementTime = System.currentTimeMillis()
-                        triggerHapticFeedback(HapticFeedbackType.LongPress)
+                                placedDrills = listOf(placedDrill)
+                                lastPlacementTime = System.currentTimeMillis()
+                                triggerHapticFeedback(HapticFeedbackType.LongPress)
+                                true
+                            }
+                        placementSucceeded
+                    } else {
+                        false
                     }
-                    true
                 } else {
                     false
                 }
