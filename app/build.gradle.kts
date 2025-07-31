@@ -57,6 +57,7 @@ dependencies {
     // ARCore
     implementation("com.google.ar:core:1.50.0")
     implementation("io.github.sceneview:arsceneview:2.3.0")
+    
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
